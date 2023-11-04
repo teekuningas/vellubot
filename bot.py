@@ -1,3 +1,4 @@
+import os
 import requests
 import time
 from datetime import datetime, timedelta, timezone
@@ -172,5 +173,8 @@ def main_test():
 
 
 if __name__ == "__main__":
-    main_bot("#vellumo", "vellubot", "irc.libera.chat", 6667)
-    # main_test()
+    channel = os.environ['BOT_CHANNEL']
+    nickname = os.environ['BOT_NICKNAME']
+    server = os.environ['BOT_SERVER']
+    port = int(os.environ['BOT_PORT'])
+    main_bot(channel, nickname, server, port)

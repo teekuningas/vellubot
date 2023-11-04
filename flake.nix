@@ -15,13 +15,18 @@
         ps.lxml
         ps.black
       ]);
+
+      botScript = pkgs.writeShellScriptBin "bot" ''
+        ${myPythonEnv}/bin/python ${./bot.py}
+      '';
     in
     {
       devShell.${system} = pkgs.mkShell {
         buildInputs = [
           myPythonEnv
-          pkgs.git
         ];
       };
+
+      packages.${system}.bot = botScript;
     };
 }
