@@ -59,8 +59,18 @@ def check_feed(feeds, filters, last_checked_time, seen):
 
 
 class MyBot(SingleServerIRCBot):
-    def __init__(self, channel, nickname, server, port=6667):
-        SingleServerIRCBot.__init__(self, [(server, port)], nickname, nickname)
+    def __init__(self, channel, nickname, server, port=6667, sasl_password=None):
+        if sasl_password:
+            SingleServerIRCBot.__init__(
+                self,
+                [(server, port, sasl_password)],
+                nickname,
+                nickname,
+                sasl_login=nickname,
+            )
+        else:
+            SingleServerIRCBot.__init__(self, [(server, port)], nickname, nickname)
+
         self.channel = channel
 
         self.feeds = FEEDS
@@ -143,9 +153,9 @@ class MyBot(SingleServerIRCBot):
         Thread(target=loop_check).start()
 
 
-def main_bot(channel, nickname, server, port):
+def main_bot(channel, nickname, server, port, sasl_password):
     """Starts the ircbot."""
-    bot = MyBot(channel, nickname, server, port)
+    bot = MyBot(channel, nickname, server, port, sasl_password)
     bot.start()
 
 
@@ -173,8 +183,9 @@ def main_test():
 
 
 if __name__ == "__main__":
-    channel = os.environ['BOT_CHANNEL']
-    nickname = os.environ['BOT_NICKNAME']
-    server = os.environ['BOT_SERVER']
-    port = int(os.environ['BOT_PORT'])
-    main_bot(channel, nickname, server, port)
+    channel = os.environ["BOT_CHANNEL"]
+    nickname = os.environ["BOT_NICKNAME"]
+    server = os.environ["BOT_SERVER"]
+    port = int(os.environ["BOT_PORT"])
+    sasl_password = os.environ.get("BOT_SASL_PASSWORD", None)
+    main_bot(channel, nickname, server, port, sasl_password)
