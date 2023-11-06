@@ -1,5 +1,16 @@
 shell:
-	nix develop
+	nix develop --extra-experimental-features "nix-command flakes"
+
+check:
+	black -t py39 --check bot.py
+	mypy bot.py
+
+lint:
+	black -t py39 bot.py
 
 watch:
-	BOT_CHANNEL=#vellumotest BOT_NICKNAME=vellubot BOT_SERVER=irc.libera.chat BOT_PORT=6667 python bot.py
+	python bot.py
+
+watch_parsers:
+	python bot.py parsers
+
