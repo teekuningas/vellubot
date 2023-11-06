@@ -14,6 +14,11 @@ jobs:
     - name: Checkout code
       uses: actions/checkout@v3
 
+    - name: Setup Nix
+      uses: cachix/install-nix-action@v22
+      with:
+        extra_nix_config: "system-features = nixos-test benchmark big-parallel kvm"
+
     - name: Check
       shell: bash
       run: make nix-check
