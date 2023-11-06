@@ -14,3 +14,5 @@ watch:
 watch_parsers:
 	python bot.py parsers
 
+nix-%:
+	nix develop --extra-experimental-features "nix-command flakes" --command $(MAKE) $*

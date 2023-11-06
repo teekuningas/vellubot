@@ -16,7 +16,7 @@ jobs:
 
     - name: Check
       shell: bash
-      run: make check
+      run: make nix-check
 
   build_and_publish:
     needs: check
