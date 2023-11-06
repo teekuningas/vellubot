@@ -7,7 +7,7 @@ You need nix: https://nixos.org/download
 ## In the development shell, run the fetchers and parsers:
   
 ```
-$ make nix-watch_test  
+$ make nix-watch_parsers  
 ```
   
 ## In the development shell, run the irc bot (including fetchers and parsers):
