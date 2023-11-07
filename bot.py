@@ -1,6 +1,7 @@
 import irc
 import logging
 import os
+import pytz
 import requests
 import sys
 import time
@@ -19,6 +20,7 @@ logging.basicConfig(level=logging.DEBUG)
 FEEDS = [
     "https://bbs.io-tech.fi/forums/naeytoenohjaimet.74/index.rss",
     "https://bbs.io-tech.fi/forums/prosessorit-emolevyt-ja-muistit.73/index.rss",
+    "https://www.tori.fi/koko_suomi/tietokoneet_ja_lisalaitteet/komponentit?ca=18&cg=5030&c=5038&w=3&st=s&st=k&st=u&st=h&st=g&st=b&com=graphic_card",
 ]
 CHECK_INTERVAL = 600
 FILTERS = ["4070", "4080", "3090"]
@@ -35,6 +37,34 @@ def rfc822_to_datetime(date_string: str) -> datetime:
             return datetime.strptime(date_string, "%a, %d %b %Y %H:%M:%S %z")
 
 
+def tori_date_to_datetime(date_string: str) -> datetime:
+    """Convert rfc822 strings to tz-aware datetime objects."""
+
+    helsinki_tz = pytz.timezone("Europe/Helsinki")
+
+    try:
+        if date_string.startswith("tänään"):
+            parsed = date_string.split("tänään ")[1]
+            obj = datetime.strptime(parsed, "%H:%M")
+            date = datetime.now(helsinki_tz).date()
+            return helsinki_tz.localize(datetime.combine(date, obj.time()))
+        elif date_string.startswith("eilen"):
+            parsed = date_string.split("eilen ")[1]
+            obj = datetime.strptime(parsed, "%H:%M")
+            date = datetime.now(helsinki_tz).date() - timedelta(days=1)
+            return helsinki_tz.localize(datetime.combine(date, obj.time()))
+        else:
+            # all the rest are treated being equally far away in the past, as they are difficult to parse
+            return (datetime.now(helsinki_tz) - timedelta(days=2)).replace(
+                hour=0, minute=0, second=0, microsecond=0
+            )
+    except Exception as exc:
+        # on exceptions, also use the past
+        return (datetime.now(helsinki_tz) - timedelta(days=2)).replace(
+            hour=0, minute=0, second=0, microsecond=0
+        )
+
+
 def parse_tori(feed: str) -> List[Dict[str, Any]]:
     """Return a list of standardized items given a url to tori.fi.
 
@@ -48,7 +78,30 @@ def parse_tori(feed: str) -> List[Dict[str, Any]]:
         ...
     ]
     """
-    return []
+    response = requests.get(feed)
+    soup = BeautifulSoup(response.content, "lxml")
+    a_tags = soup.select("a.item_row_flex")
+
+    items = []
+    for a in a_tags:
+        title = a.select("div.li-title")[0].string
+        link = a.get("href")
+        uid = a.get("id")
+        datetime_ = tori_date_to_datetime(
+            a.select("div.date_image")[0]
+            .string.strip()
+            .replace("\n", "")
+            .replace("\t", "")
+        )
+        items.append(
+            {
+                "datetime": datetime_,
+                "link": link,
+                "title": title,
+                "uid": uid,
+            }
+        )
+    return items
 
 
 def parse_rss(feed: str) -> List[Dict[str, Any]]:
