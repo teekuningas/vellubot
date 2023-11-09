@@ -27,9 +27,9 @@ FEEDS = [
     "https://www.tori.fi/koko_suomi/tietokoneet_ja_lisalaitteet/komponentit?ca=18&cg=5030&c=5038&st=s&st=k&st=u&st=h&st=g&st=b&w=3&o=2",
     "https://www.tori.fi/koko_suomi/tietokoneet_ja_lisalaitteet/komponentit?ca=18&cg=5030&c=5038&w=3&st=s&st=k&st=u&st=h&st=g&st=b",
 ]
-CHECK_INTERVAL = 600
-CHECK_LENGTH = 360000
-FILTERS = ["4070", "4080", "3090"]
+CHECK_INTERVAL = 60 * 10
+CHECK_LENGTH = 60 * 60
+FILTERS = ["4070", "4080", "3090", "3080", "980ti", "980 ti"]
 
 
 def rfc822_to_datetime(date_string: str) -> datetime:
@@ -167,7 +167,7 @@ def check_feeds(
             # If filters present, check if the current item is ok
             if filters:
                 for filter_str in filters:
-                    if filter_str in item["title"]:
+                    if filter_str.upper() in item["title"].upper():
                         break
                 else:
                     continue
