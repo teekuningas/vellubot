@@ -13,16 +13,22 @@ from threading import Thread
 from typing import Any, Dict, List, Optional, Tuple
 
 
-logging.basicConfig(level=logging.DEBUG)
+logging.basicConfig(
+    level=logging.DEBUG,
+    format="%(asctime)s %(levelname)s:%(name)s:%(message)s",
+    datefmt="%Y-%m-%d %H:%M:%S",
+)
 
 
 # default values, overridable by interactive commands
 FEEDS = [
     "https://bbs.io-tech.fi/forums/naeytoenohjaimet.74/index.rss",
     "https://bbs.io-tech.fi/forums/prosessorit-emolevyt-ja-muistit.73/index.rss",
-    "https://www.tori.fi/koko_suomi/tietokoneet_ja_lisalaitteet/komponentit?ca=18&cg=5030&c=5038&w=3&st=s&st=k&st=u&st=h&st=g&st=b&com=graphic_card",
+    "https://www.tori.fi/koko_suomi/tietokoneet_ja_lisalaitteet/komponentit?ca=18&cg=5030&c=5038&st=s&st=k&st=u&st=h&st=g&st=b&w=3&o=2",
+    "https://www.tori.fi/koko_suomi/tietokoneet_ja_lisalaitteet/komponentit?ca=18&cg=5030&c=5038&w=3&st=s&st=k&st=u&st=h&st=g&st=b",
 ]
 CHECK_INTERVAL = 600
+CHECK_LENGTH = 360000
 FILTERS = ["4070", "4080", "3090"]
 
 
@@ -137,9 +143,9 @@ def parse_rss(feed: str) -> List[Dict[str, Any]]:
 def check_feeds(
     feeds: List[str],
     filters: List[str],
-    last_checked_time: datetime,
+    check_length: int,
     seen: List[str],
-) -> Tuple[List[Dict[str, Any]], datetime, List[str]]:
+) -> Tuple[List[Dict[str, Any]], List[str]]:
     """Check all the feed urls for new items."""
 
     new_items = []
@@ -167,11 +173,13 @@ def check_feeds(
                     continue
 
             # only look at the recently updated posts
-            if item["datetime"] > last_checked_time:
+            if item["datetime"] > datetime.now(timezone.utc) - timedelta(
+                seconds=check_length
+            ):
                 seen.append(item["uid"])
                 new_items.append(item)
 
-    return new_items, datetime.now(timezone.utc), seen
+    return new_items, seen
 
 
 class MyBot(SingleServerIRCBot):
@@ -204,12 +212,10 @@ class MyBot(SingleServerIRCBot):
 
         self.feeds = FEEDS
         self.check_interval = CHECK_INTERVAL
+        self.check_length = CHECK_LENGTH
         self.filters = FILTERS
 
         self.seen: List[str] = []
-        self.last_checked_time = datetime.now(timezone.utc) - timedelta(
-            seconds=self.check_interval
-        )
 
     def on_nicknameinuse(
         self, c: irc.client.SimpleIRCClient, e: irc.client.Event
@@ -255,6 +261,19 @@ class MyBot(SingleServerIRCBot):
             except ValueError:
                 pass
 
+        if msg == "!check_length":
+            self.connection.privmsg(
+                self.channel, "Check length: " + str(self.check_length)
+            )
+
+        if msg.startswith("!check_length") and len(msg.split(" ")) == 2:
+            value = msg.split(" ")[1]
+            self.connection.privmsg(self.channel, "Setting check length to: " + value)
+            try:
+                self.check_length = int(value)
+            except ValueError:
+                pass
+
         if msg.startswith("!filter") and len(msg.split(" ")) > 1:
             value = " ".join(msg.split(" ")[1:])
             self.connection.privmsg(self.channel, "Adding new filter: " + value)
@@ -273,8 +292,8 @@ class MyBot(SingleServerIRCBot):
             while True:
                 # check if new interesting items
                 try:
-                    new_items, self.last_checked_time, self.seen = check_feeds(
-                        self.feeds, self.filters, self.last_checked_time, self.seen
+                    new_items, self.seen = check_feeds(
+                        self.feeds, self.filters, self.check_length, self.seen
                     )
                     # if yes, msg to channel
                     for item in new_items:
@@ -303,18 +322,16 @@ def main_parsers() -> None:
 
     feeds = FEEDS
     check_interval = CHECK_INTERVAL
+    check_length = CHECK_LENGTH
     filters = FILTERS
 
     seen: List[str] = []
-    last_checked_time = datetime.now(timezone.utc) - timedelta(seconds=check_interval)
 
     while True:
         print("Checking at: " + str(datetime.now()))
 
         try:
-            new_items, last_checked_time, seen = check_feeds(
-                feeds, filters, last_checked_time, seen
-            )
+            new_items, seen = check_feeds(feeds, filters, check_length, seen)
             for item in new_items:
                 print(f"New item: {item['link']}")
         except Exception as exc:
