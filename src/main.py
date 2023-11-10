@@ -218,10 +218,14 @@ def main_bot(
     bot.start()
 
 
-if __name__ == "__main__":
+def main():
     channel = os.environ.get("BOT_CHANNEL", "#vellumotest")
     nickname = os.environ.get("BOT_NICKNAME", "vellubot")
     server = os.environ.get("BOT_SERVER", "irc.libera.chat")
     port = int(os.environ.get("BOT_PORT", "6667"))
     sasl_password = os.environ.get("BOT_SASL_PASSWORD", None)
     main_bot(channel, nickname, server, port, sasl_password)
+
+
+if __name__ == "__main__":
+    main()

@@ -30,17 +30,25 @@
         (ps.mypy.overridePythonAttrs (oldAttrs: { doCheck = false; }))
       ]);
 
-      botScript = pkgs.writeShellScriptBin "bot" ''
-        ${myPythonEnv}/bin/python ${./main.py}
-      '';
+      vellubot = pkgs.python311Packages.buildPythonApplication rec {
+        pname = "vellubot";
+        version = "0.1.0";
+        src = ./.;  # Use the current directory as the source
+
+        propagatedBuildInputs = [
+          myPythonEnv
+        ];
+
+        # This is necessary if your package has dependencies that need to be compiled
+        buildInputs = with pkgs.python311Packages; [ setuptools ];
+      };
     in
     {
       devShell.${system} = pkgs.mkShell {
         buildInputs = [
-          myPythonEnv
+          vellubot
         ];
       };
-
-      packages.${system}.bot = botScript;
+      packages.${system}.bot = vellubot;
     };
 }
