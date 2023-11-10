@@ -31,7 +31,7 @@
       ]);
 
       botScript = pkgs.writeShellScriptBin "bot" ''
-        ${myPythonEnv}/bin/python ${./bot.py}
+        ${myPythonEnv}/bin/python ${./main.py}
       '';
     in
     {
