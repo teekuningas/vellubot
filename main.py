@@ -5,8 +5,9 @@ import time
 import traceback
 from irc.bot import SingleServerIRCBot
 from threading import Thread
-from typing import List, Optional
+from typing import List, Optional, Tuple
 from src.parser import check_feeds
+from src.chat import chat
 
 
 logging.basicConfig(
@@ -63,6 +64,9 @@ class MyBot(SingleServerIRCBot):
 
         self.seen: List[str] = []
 
+        self.nickname = nickname
+        self.history: List[Tuple[str, str]] = []
+
     def on_nicknameinuse(
         self, c: irc.client.SimpleIRCClient, e: irc.client.Event
     ) -> None:
@@ -79,6 +83,11 @@ class MyBot(SingleServerIRCBot):
     def on_pubmsg(self, c: irc.client.SimpleIRCClient, e: irc.client.Event) -> None:
         """Handle interactive parts."""
         msg = e.arguments[0]
+
+        try:
+            username = e.source.split("!")[0]
+        except Exception as exc:
+            username = "unknown"
 
         commands = []
 
@@ -141,6 +150,28 @@ class MyBot(SingleServerIRCBot):
                 self.check_length = int(value)
             except ValueError:
                 pass
+
+        commands.append(("!chat <msg>", "Chat with me!"))
+        if msg.startswith("!chat") and len(msg.split(" ")) > 1:
+            value = " ".join(msg.split(" ")[1:])
+
+            # get response from openai
+            try:
+                new_history = chat(self.history + [(username, value)], self.nickname)
+            except Exception as exc:
+                new_history = [(self.nickname, "Something went wrong.. :(")]
+
+            # send the response as messages
+            for item in new_history:
+                time.sleep(0.5)
+                self.connection.privmsg(self.channel, f"{item[0]}: {item[1]}")
+
+            # update history with old history, current msg and openai responses
+            self.history = self.history + [(username, msg)] + new_history
+
+        else:
+            # update history also when not explicitly chatting
+            self.history = self.history + [(username, msg)]
 
         commands.append(("!commands", "Show this message"))
         if msg == "!commands":
