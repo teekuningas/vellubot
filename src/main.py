@@ -164,7 +164,7 @@ class MyBot(SingleServerIRCBot):
             # send the response as messages
             for item in new_history:
                 time.sleep(0.5)
-                self.connection.privmsg(self.channel, f"{item[0]}: {item[1]}")
+                self.connection.privmsg(self.channel, f"{item[1]}")
 
             # update history with old history, current msg and openai responses
             self.history = self.history + [(username, msg)] + new_history
