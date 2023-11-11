@@ -66,9 +66,6 @@ You are an AI chat bot named {name} operating in an IRC chat. Your role is to in
             else:
                 history.pop(0)
 
-    # Create history string
-    history_str = "\n".join([": ".join((msg[0], msg[1])) for msg in history])
-
     # Log to debug log
     logger.debug("History: ")
     logger.debug("\n" + history_str)
@@ -77,7 +74,7 @@ You are an AI chat bot named {name} operating in an IRC chat. Your role is to in
     messages_prompt = []
     messages_prompt.append({"role": "system", "content": instruction})
     for msg in history:
-        messages_prompt.append({"role": "user", "content": history_str})
+        messages_prompt.append({"role": "user", "content": msg[1]})
 
     # And run the query
     response = openai.ChatCompletion.create(
@@ -92,7 +89,18 @@ You are an AI chat bot named {name} operating in an IRC chat. Your role is to in
     logger.debug("\n" + new_history_str)
 
     # Parse from string
-    new_history = [(name, msg) for msg in new_history_str.split("\n") if msg]
+    new_history = []
+    for line in new_history_str.split("\n"):
+        if not line:
+            continue
+
+        # remove name from beginning if present..
+        if line.startswith(f"{name}: "):
+            msg = line.split(f"{name}: ")[1]
+        else:
+            msg = line
+
+        new_history.append((name, msg))
 
     return new_history
 

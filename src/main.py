@@ -31,6 +31,13 @@ CHECK_LENGTH = 3600
 FILTERS = ["4070", "4080", "3090", "3080", "980 ?ti", "12900", "13700", "7800x3d"]
 
 
+def split_message(msg, max_length=460):
+    """IRC protocal has a max length of 512 bytes / msg, so safely split before that happens.."""
+    while msg:
+        chunk, msg = msg[:max_length], msg[max_length:]
+        yield chunk
+
+
 class MyBot(SingleServerIRCBot):
     """The stateful bot, inheriting from irc.SingleServerIRCBot."""
 
@@ -95,44 +102,42 @@ class MyBot(SingleServerIRCBot):
 
         commands.append(("!filters", "Show all filters"))
         if msg == "!filters":
-            self.connection.privmsg(self.channel, "Filters: " + ", ".join(self.filters))
+            self.send_message("Filters: " + ", ".join(self.filters))
 
         commands.append(("!nofilters", "Clear all filters"))
         if msg == "!nofilters":
-            self.connection.privmsg(self.channel, "Clearing filters.")
+            self.send_message("Clearing filters.")
             self.filters = []
 
         commands.append(("!filter <regexp>", "Add new filter"))
         if msg.startswith("!filter") and len(msg.split(" ")) > 1:
             value = " ".join(msg.split(" ")[1:])
-            self.connection.privmsg(self.channel, "Adding new filter: " + value)
+            self.send_message("Adding new filter: " + value)
             self.filters.append(value)
 
         commands.append(("!feeds", "Show all feeds"))
         if msg == "!feeds":
-            self.connection.privmsg(self.channel, "Feeds: " + ", ".join(self.feeds))
+            self.send_message("Feeds: " + ", ".join(self.feeds))
 
         commands.append(("!nofeeds", "Clear all feeds"))
         if msg == "!nofeeds":
-            self.connection.privmsg(self.channel, "Clearing feeds.")
+            self.send_message("Clearing feeds.")
             self.feeds = []
 
         commands.append(("!feed <url>", "Add new feed"))
         if msg.startswith("!feed") and len(msg.split(" ")) == 2:
             value = msg.split(" ")[1]
-            self.connection.privmsg(self.channel, "Adding new feed: " + value)
+            self.send_message("Adding new feed: " + value)
             self.feeds.append(value)
 
         commands.append(("!check_interval", "Show check interval"))
         if msg == "!check_interval":
-            self.connection.privmsg(
-                self.channel, "Check interval: " + str(self.check_interval)
-            )
+            self.send_message("Check interval: " + str(self.check_interval))
 
         commands.append(("!check_interval <int>", "Set check interval"))
         if msg.startswith("!check_interval") and len(msg.split(" ")) == 2:
             value = msg.split(" ")[1]
-            self.connection.privmsg(self.channel, "Setting check interval to: " + value)
+            self.send_message("Setting check interval to: " + value)
             try:
                 self.check_interval = int(value)
             except ValueError:
@@ -140,14 +145,12 @@ class MyBot(SingleServerIRCBot):
 
         commands.append(("!check_length", "Show check length"))
         if msg == "!check_length":
-            self.connection.privmsg(
-                self.channel, "Check length: " + str(self.check_length)
-            )
+            self.send_message("Check length: " + str(self.check_length))
 
         commands.append(("!check_length <int>", "Set check length"))
         if msg.startswith("!check_length") and len(msg.split(" ")) == 2:
             value = msg.split(" ")[1]
-            self.connection.privmsg(self.channel, "Setting check length to: " + value)
+            self.send_message("Setting check length to: " + value)
             try:
                 self.check_length = int(value)
             except ValueError:
@@ -167,7 +170,7 @@ class MyBot(SingleServerIRCBot):
             # send the response as messages
             for item in new_history:
                 time.sleep(1.0)
-                self.connection.privmsg(self.channel, f"{item[1]}")
+                self.send_message(f"{item[1]}")
 
             # update history with old history, current msg and openai responses
             self.history = self.history + [(username, msg)] + new_history
@@ -178,13 +181,16 @@ class MyBot(SingleServerIRCBot):
 
         commands.append(("!commands", "Show this message"))
         if msg == "!commands":
-            self.connection.privmsg(self.channel, "All commands: ")
+            self.send_message("All commands: ")
             padding = max(len(command[0]) for command in commands) + 2
             for command, description in commands:
                 time.sleep(1.0)
-                self.connection.privmsg(
-                    self.channel, command.ljust(padding) + description
-                )
+                self.send_message(command.ljust(padding) + description)
+
+    def send_message(self, msg):
+        """Helper to send messages."""
+        for chunk in split_message(msg):
+            self.connection.privmsg(self.channel, chunk)
 
     def start_main_loop(self) -> None:
         """Start the periodical main loop."""
@@ -199,11 +205,9 @@ class MyBot(SingleServerIRCBot):
                     )
                     # if yes, msg to channel
                     for item in new_items:
-                        self.connection.privmsg(
-                            self.channel, f"New item: {item['link']}"
-                        )
+                        self.send_message(f"New item: {item['link']}")
                 except Exception as exc:
-                    self.connection.privmsg(self.channel, f"Checking the feeds failed.")
+                    self.send_message(f"Checking the feeds failed.")
                     logger.exception("Exception while checking the feeds:")
 
                 time.sleep(self.check_interval)
