@@ -2,7 +2,6 @@ import irc
 import logging
 import os
 import time
-import traceback
 from irc.bot import SingleServerIRCBot
 from threading import Thread
 from typing import List, Optional, Tuple
@@ -15,6 +14,9 @@ logging.basicConfig(
     format="%(asctime)s %(levelname)s:%(name)s:%(message)s",
     datefmt="%Y-%m-%d %H:%M:%S",
 )
+
+
+logger = logging.getLogger("app")
 
 
 # default values, overridable by interactive commands
@@ -160,10 +162,11 @@ class MyBot(SingleServerIRCBot):
                 new_history = chat(self.history + [(username, value)], self.nickname)
             except Exception as exc:
                 new_history = [(self.nickname, "Something went wrong.. :(")]
+                logger.exception("Something went wrong when talking to openai:")
 
             # send the response as messages
             for item in new_history:
-                time.sleep(0.5)
+                time.sleep(1.0)
                 self.connection.privmsg(self.channel, f"{item[1]}")
 
             # update history with old history, current msg and openai responses
@@ -178,9 +181,7 @@ class MyBot(SingleServerIRCBot):
             self.connection.privmsg(self.channel, "All commands: ")
             padding = max(len(command[0]) for command in commands) + 2
             for command, description in commands:
-                # Wait 0.5 seconds before each line
-                time.sleep(0.5)
-
+                time.sleep(1.0)
                 self.connection.privmsg(
                     self.channel, command.ljust(padding) + description
                 )
@@ -203,7 +204,7 @@ class MyBot(SingleServerIRCBot):
                         )
                 except Exception as exc:
                     self.connection.privmsg(self.channel, f"Checking the feeds failed.")
-                    traceback.print_exc()
+                    logger.exception("Exception while checking the feeds:")
 
                 time.sleep(self.check_interval)
 

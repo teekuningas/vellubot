@@ -1,3 +1,4 @@
+import logging
 import os
 import openai
 import tiktoken
@@ -10,15 +11,35 @@ openai.api_key = os.environ.get("OPENAI_API_KEY")
 openai.organization = os.environ.get("OPENAI_ORGANIZATION_ID")
 
 
+logger = logging.getLogger("app")
+
+
 def chat(
     history: List[Tuple[str, str]],
     name: str,
 ) -> List[Tuple[str, str]]:
     buffer_tokens = 64
     wrapper_tokens = 5
-    max_tokens = 512
 
-    model = os.environ.get("OPENAI_MODEL") or "gpt-4"
+    max_tokens_in = 1024
+    if os.environ.get("OPENAI_MAX_TOKENS_IN"):
+        openai_max_tokens_in = os.environ.get("OPENAI_MAX_TOKENS_IN")
+        if openai_max_tokens_in is not None:
+            try:
+                max_tokens_in = int(openai_max_tokens_in)
+            except ValueError as exc:
+                pass
+
+    max_tokens_out = 256
+    if os.environ.get("OPENAI_MAX_TOKENS_OUT"):
+        openai_max_tokens_out = os.environ.get("OPENAI_MAX_TOKENS_OUT")
+        if openai_max_tokens_out is not None:
+            try:
+                max_tokens_out = int(openai_max_tokens_out)
+            except ValueError as exc:
+                pass
+
+    model = os.environ.get("OPENAI_MODEL") or "gpt-3.5-turbo"
 
     def count_tokens(text):
         encoding = tiktoken.encoding_for_model(model)
@@ -26,11 +47,11 @@ def chat(
 
     # The instruction prompt
     instruction = f"""
-You are an AI chat bot named {name} operating in an IRC chat. Your role is to interact with users, respond to their questions, provide helpful and accurate information, and engage in general conversation. You have access to the history of the chat and should use this context when formulating your responses. Your responses may span multiple lines, and will be reformatted to multiple IRC messages. When formulating the messages, remember that IRC does not have any special formatting such as markdown. You should not prefix the messages with your name.
+You are an AI chat bot named {name} operating in an IRC chat. Your role is to interact with users, respond to their questions, provide helpful and accurate information, and engage in general conversation. You have access to the history of the chat, including your own earlier messages, and should use this context when formulating your responses. Your responses may span multiple lines, and will be reformatted to multiple IRC messages. When formulating the messages, remember that IRC does not have any special formatting such as markdown. You should not prefix the messages with your name.
     """
 
     # Calculate how many tokens we can use for the conversation history
-    tokens_available = max_tokens - count_tokens(instruction) - buffer_tokens
+    tokens_available = max_tokens_in - count_tokens(instruction) - buffer_tokens
 
     # Truncate conversation history if necessary
     history_str = "\n".join([": ".join((msg[0], msg[1])) for msg in history])
@@ -48,6 +69,10 @@ You are an AI chat bot named {name} operating in an IRC chat. Your role is to in
     # Create history string
     history_str = "\n".join([": ".join((msg[0], msg[1])) for msg in history])
 
+    # Log to debug log
+    logger.debug("History: ")
+    logger.debug("\n" + history_str)
+
     # Prepare prompt that ChatCompletion understands
     messages_prompt = []
     messages_prompt.append({"role": "system", "content": instruction})
@@ -56,11 +81,17 @@ You are an AI chat bot named {name} operating in an IRC chat. Your role is to in
 
     # And run the query
     response = openai.ChatCompletion.create(
-        model=model, messages=messages_prompt, temperature=0
+        model=model, messages=messages_prompt, temperature=0, max_tokens=max_tokens_out
     )
 
     # Extract the message
     new_history_str = response["choices"][0]["message"]["content"]
+
+    # Log it debug log
+    logger.debug("OpenAI Response:")
+    logger.debug("\n" + new_history_str)
+
+    # Parse from string
     new_history = [(name, msg) for msg in new_history_str.split("\n") if msg]
 
     return new_history
@@ -71,9 +102,4 @@ if __name__ == "__main__":
         ("Zairex", "Mitä eroa on nvidian ja amd:n näytönohjaimilla?"),
         ("zups", "Ja mitä yhteistä niillä on?"),
     ]
-
-    pprint(history)
-
     new_history = chat(history, "vellubot")
-
-    pprint(new_history)

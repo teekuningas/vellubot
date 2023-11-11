@@ -1,11 +1,14 @@
+import logging
 import re
 import pytz
 import requests
 import time
-import traceback
 from bs4 import BeautifulSoup
 from datetime import datetime, timedelta, timezone
 from typing import Any, Dict, List, Tuple
+
+
+logger = logging.getLogger("app")
 
 
 def rfc822_to_datetime(date_string: str) -> datetime:
@@ -148,8 +151,7 @@ def check_feeds(
                         if re.compile(filter_str).search(item["title"], re.IGNORECASE):
                             break
                     except Exception as exc:
-                        print("Regular expression filter failed:")
-                        traceback.print_exc()
+                        logger.exception("Regular expression filter failed:")
                 else:
                     continue
 
@@ -174,15 +176,14 @@ def main_parsers() -> None:
     seen: List[str] = []
 
     while True:
-        print("Checking at: " + str(datetime.now()))
+        logger.info("Checking at: " + str(datetime.now()))
 
         try:
             new_items, seen = check_feeds(feeds, filters, check_length, seen)
             for item in new_items:
-                print(f"New item: {item['link']}")
+                logger.info(f"New item: {item['link']}")
         except Exception as exc:
-            print("Checking the feeds failed.")
-            traceback.print_exc()
+            logger.exception("Checking the feeds failed.")
 
         time.sleep(check_interval)
 
