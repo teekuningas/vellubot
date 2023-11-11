@@ -76,20 +76,20 @@ class MyBot(SingleServerIRCBot):
         self.nickname = nickname
         self.history: List[Tuple[str, str]] = []
 
-    def on_nicknameinuse(
-        self, c: irc.client.SimpleIRCClient, e: irc.client.Event
-    ) -> None:
+    def on_nicknameinuse(self, c: irc.client.Connection, e: irc.client.Event) -> None:
         """If nickname is in use on join, try a different name."""
-        c.nick(c.get_nickname() + "_")
+        new_name = c.get_nickname() + "_"
+        c.nick(new_name)
+        self.nickname = new_name
 
-    def on_welcome(self, c: irc.client.SimpleIRCClient, e: irc.client.Event) -> None:
+    def on_welcome(self, c: irc.client.Connection, e: irc.client.Event) -> None:
         """On welcome to the server, join the channel and start the main loop."""
         c.join(self.channel)
 
         # start the main loop
         self.start_main_loop()
 
-    def on_pubmsg(self, c: irc.client.SimpleIRCClient, e: irc.client.Event) -> None:
+    def on_pubmsg(self, c: irc.client.Connection, e: irc.client.Event) -> None:
         """Handle interactive parts."""
         msg = e.arguments[0]
 
@@ -156,8 +156,10 @@ class MyBot(SingleServerIRCBot):
             except ValueError:
                 pass
 
-        commands.append(("!chat <msg>", "Chat with me!"))
-        if msg.startswith("!chat") and len(msg.split(" ")) > 1:
+        commands.append((f"!chat <msg> (or `{self.nickname}: <msg>`)", "Chat with me!"))
+        if (msg.startswith("!chat") or msg.startswith(f"{self.nickname}: ")) and len(
+            msg.split(" ")
+        ) > 1:
             value = " ".join(msg.split(" ")[1:])
 
             # get response from openai
