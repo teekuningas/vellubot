@@ -31,8 +31,9 @@ CHECK_LENGTH = 3600
 FILTERS = ["4070", "4080", "3090", "3080", "980 ?ti", "12900", "13700", "7800x3d"]
 
 
-def split_message(msg, max_length=460):
-    """IRC protocal has a max length of 512 bytes / msg, so safely split before that happens.."""
+def split_message(msg, max_length=256):
+    """The IRC protocal has a max length of 512 bytes / msg, so safely split before that happens..
+    Note that 512 bytes does not mean 512 characters."""
     while msg:
         chunk, msg = msg[:max_length], msg[max_length:]
         yield chunk
