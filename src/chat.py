@@ -21,7 +21,7 @@ def chat(
     buffer_tokens = 64
     wrapper_tokens = 5
 
-    max_tokens_in = 1024
+    max_tokens_in = 2048
     if os.environ.get("OPENAI_MAX_TOKENS_IN"):
         openai_max_tokens_in = os.environ.get("OPENAI_MAX_TOKENS_IN")
         if openai_max_tokens_in is not None:
@@ -78,7 +78,11 @@ You are an AI chat bot named {name} operating in an IRC chat. Your role is to in
 
     # And run the query
     response = openai.ChatCompletion.create(
-        model=model, messages=messages_prompt, temperature=0, max_tokens=max_tokens_out
+        model=model,
+        messages=messages_prompt,
+        temperature=0,
+        max_tokens=max_tokens_out,
+        request_timeout=30,
     )
 
     # Extract the message
