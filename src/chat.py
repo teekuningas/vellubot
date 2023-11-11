@@ -89,7 +89,7 @@ You are an AI chat bot named {name} operating in an IRC chat. Your role is to in
     logger.debug("\n" + new_history_str)
 
     # Parse from string
-    new_history = []
+    new_history: List[Tuple[str, str]] = []
     for line in new_history_str.split("\n"):
         if not line:
             continue
@@ -99,6 +99,8 @@ You are an AI chat bot named {name} operating in an IRC chat. Your role is to in
             msg = line.split(f"{name}: ")[1]
         else:
             msg = line
+
+        assert isinstance(msg, str)
 
         new_history.append((name, msg))
 
