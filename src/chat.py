@@ -71,10 +71,12 @@ You are an AI chat bot named {name} operating in an IRC chat. Your role is to in
     logger.debug("\n" + history_str)
 
     # Prepare prompt that ChatCompletion understands
-    messages_prompt = []
-    messages_prompt.append({"role": "system", "content": instruction})
-    for msg in history:
-        messages_prompt.append({"role": "user", "content": msg[1]})
+
+    user_content = "\n".join([f"{elem[0]}: {elem[1]}" for elem in history])
+    messages_prompt = [
+        {"role": "system", "content": instruction},
+        {"role": "user", "content": user_content},
+    ]
 
     # And run the query
     response = openai.ChatCompletion.create(
