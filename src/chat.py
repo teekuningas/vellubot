@@ -17,6 +17,7 @@ logger = logging.getLogger("app")
 def chat(
     history: List[Tuple[str, str]],
     name: str,
+    instruction: Optional[str] = None,
 ) -> List[Tuple[str, str]]:
     buffer_tokens = 64
     wrapper_tokens = 5
@@ -46,9 +47,10 @@ def chat(
         return len(encoding.encode(text))
 
     # The instruction prompt
-    instruction = f"""
+    if instruction is None:
+        instruction = f"""
 You are an AI chat bot named {name} operating in an IRC chat. Your role is to interact with users, respond to their questions, provide helpful and accurate information, and engage in general conversation. You have access to the history of the chat, including your own earlier messages, and should use this context when formulating your responses. Your responses may span multiple lines, and will be reformatted to multiple IRC messages. When formulating the messages, remember that IRC does not have any special formatting such as markdown. You should not prefix the messages with your name.
-    """
+        """
 
     # Calculate how many tokens we can use for the conversation history
     tokens_available = max_tokens_in - count_tokens(instruction) - buffer_tokens

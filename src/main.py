@@ -75,7 +75,9 @@ class MyBot(SingleServerIRCBot):
         self.seen: List[str] = []
 
         self.nickname = nickname
+
         self.history: List[Tuple[str, str]] = []
+        self.instruction: Optional[str] = None
 
     def on_nicknameinuse(self, c: irc.client.Connection, e: irc.client.Event) -> None:
         """If nickname is in use on join, try a different name."""
@@ -131,6 +133,20 @@ class MyBot(SingleServerIRCBot):
             self.send_message("Adding new feed: " + value)
             self.feeds.append(value)
 
+        commands.append(("!inst <instruction>", "Set new system instruction"))
+        if msg.startswith("!inst"):
+            if len(msg.split(" ")) > 1:
+                self.instruction = " ".join(msg.split(" ")[1:])
+            else:
+                self.instruction = ""
+
+            self.send_message("Setting new instruction: " + str(self.instruction))
+
+        commands.append(("!definst", "Set default system instruction"))
+        if msg == "!definst":
+            self.instruction = None
+            self.send_message("Using default instruction.")
+
         commands.append(("!check_interval", "Show check interval"))
         if msg == "!check_interval":
             self.send_message("Check interval: " + str(self.check_interval))
@@ -165,7 +181,9 @@ class MyBot(SingleServerIRCBot):
 
             # get response from openai
             try:
-                new_history = chat(self.history + [(username, value)], self.nickname)
+                new_history = chat(
+                    self.history + [(username, value)], self.nickname, self.instruction
+                )
             except Exception as exc:
                 new_history = [(self.nickname, "Something went wrong.. :(")]
                 logger.exception("Something went wrong when talking to openai:")
