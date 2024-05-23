@@ -23,26 +23,34 @@ def rfc822_to_datetime(date_string: str) -> datetime:
 
 
 def tori_date_to_datetime(date_string: str) -> datetime:
-    """Convert rfc822 strings to tz-aware datetime objects."""
+    """Convert weird tori datetime strings to tz-aware datetime objects."""
 
     helsinki_tz = pytz.timezone("Europe/Helsinki")
 
     try:
-        if date_string.startswith("tänään"):
-            parsed = date_string.split("tänään ")[1]
-            obj = datetime.strptime(parsed, "%H:%M")
-            date = datetime.now(helsinki_tz).date()
-            return helsinki_tz.localize(datetime.combine(date, obj.time()))
-        elif date_string.startswith("eilen"):
-            parsed = date_string.split("eilen ")[1]
-            obj = datetime.strptime(parsed, "%H:%M")
-            date = datetime.now(helsinki_tz).date() - timedelta(days=1)
-            return helsinki_tz.localize(datetime.combine(date, obj.time()))
+        if date_string == "minuutti sitten":
+            return datetime.now(helsinki_tz) - timedelta(minutes=1)
+        elif date_string.endswith("minuuttia sitten"):
+            n_minutes = int(date_string.split(" ")[0])
+            return datetime.now(helsinki_tz) - timedelta(minutes=n_minutes)
+        elif date_string.endswith("tunti sitten"):
+            return datetime.now(helsinki_tz) - timedelta(hours=1)
+        elif date_string.endswith(" tuntia sitten"):
+            n_hours = int(date_string.split(" ")[0])
+            return datetime.now(helsinki_tz) - timedelta(hours=n_hours)
+        elif date_string.endswith("päivä sitten"):
+            return datetime.now(helsinki_tz) - timedelta(days=1)
+        elif date_string.endswith(" päivää sitten"):
+            n_days = int(date_string.split(" ")[0])
+            return datetime.now(helsinki_tz) - timedelta(days=n_days)
+        elif "päästä" in date_string:
+            return datetime.now(helsinki_tz)
         else:
             # all the rest are treated being equally far away in the past, as they are difficult to parse
             return (datetime.now(helsinki_tz) - timedelta(days=2)).replace(
                 hour=0, minute=0, second=0, microsecond=0
             )
+
     except Exception as exc:
         # on exceptions, also use the past
         return (datetime.now(helsinki_tz) - timedelta(days=2)).replace(
@@ -65,27 +73,31 @@ def parse_tori(feed: str) -> List[Dict[str, Any]]:
     """
     response = requests.get(feed)
     soup = BeautifulSoup(response.content, "lxml")
-    a_tags = soup.select("a.item_row_flex")
+
+    cards = soup.select("article")
 
     items = []
-    for a in a_tags:
-        title = a.select("div.li-title")[0].string
-        link = a.get("href")
-        uid = a.get("id")
-        datetime_ = tori_date_to_datetime(
-            a.select("div.date_image")[0]
-            .string.strip()
-            .replace("\n", "")
-            .replace("\t", "")
-        )
-        items.append(
-            {
-                "datetime": datetime_,
-                "link": link,
-                "title": title,
-                "uid": uid,
-            }
-        )
+    for card in cards:
+        try:
+            a_tag = card.select("a")[0]
+            title = a_tag.contents[1]
+            link = a_tag.attrs["href"]
+            uid = a_tag.attrs["href"].split("/")[-1]
+            tori_date = card.select("div.text-s")[0].contents[0].contents[0]
+
+            datetime_ = tori_date_to_datetime(tori_date.strip())
+            items.append(
+                {
+                    "datetime": datetime_,
+                    "link": link,
+                    "title": title,
+                    "uid": uid,
+                }
+            )
+        except Exception:
+            logger.exception(
+                "Unexpected 'article' card structure when parsing tori feed."
+            )
     return items
 
 
@@ -168,10 +180,12 @@ def check_feeds(
 def main_parsers() -> None:
     """Run parser test app."""
 
-    feeds = ["https://bbs.io-tech.fi/forums/naeytoenohjaimet.74/index.rss"]
+    feeds = [
+        "https://www.tori.fi/recommerce/forsale/search?product_category=2.93.3215.8368"
+    ]
     check_interval = 60
     check_length = 360000
-    filters = ["3080 ?ti"]
+    filters = ["1070"]
 
     seen: List[str] = []
 
