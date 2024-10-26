@@ -83,7 +83,7 @@ def parse_tori(feed: str) -> List[Dict[str, Any]]:
             title = a_tag.contents[1]
             link = a_tag.attrs["href"]
             uid = a_tag.attrs["href"].split("/")[-1]
-            tori_date = card.select("div.text-s")[0].contents[0].contents[0]
+            tori_date = card.select("div.text-xs")[0].contents[1].contents[0]
 
             datetime_ = tori_date_to_datetime(tori_date.strip())
             items.append(
