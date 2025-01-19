@@ -1,7 +1,7 @@
 {
   description = "A Python development shell for an IRC bot";
 
-  inputs.nixpkgs.url = "github:NixOS/nixpkgs/23.05";
+  inputs.nixpkgs.url = "nixpkgs/nixos-unstable";
 
   outputs = { self, nixpkgs }:
     let
