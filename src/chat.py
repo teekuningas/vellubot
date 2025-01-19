@@ -6,6 +6,8 @@ import tiktoken
 from typing import List, Tuple, Optional
 from pprint import pprint
 
+from openai.types.chat import ChatCompletionMessageParam
+
 
 openai.api_key = os.environ.get("OPENAI_API_KEY")
 openai.organization = os.environ.get("OPENAI_ORGANIZATION_ID")
@@ -75,22 +77,22 @@ You are an AI chat bot named {name} operating in an IRC chat. Your role is to in
     # Prepare prompt that ChatCompletion understands
 
     user_content = "\n".join([f"{elem[0]}: {elem[1]}" for elem in history])
-    messages_prompt = [
+    messages: list[ChatCompletionMessageParam] = [
         {"role": "system", "content": instruction},
         {"role": "user", "content": user_content},
     ]
 
     # And run the query
-    response = openai.ChatCompletion.create(
+    response = openai.chat.completions.create(
         model=model,
-        messages=messages_prompt,
+        messages=messages,
         temperature=0,
         max_tokens=max_tokens_out,
-        request_timeout=30,
+        timeout=30,
     )
 
     # Extract the message
-    new_history_str = response["choices"][0]["message"]["content"]
+    new_history_str = response.choices[0].message.content or ""
 
     # Log it debug log
     logger.debug("OpenAI Response:")
