@@ -1,17 +1,27 @@
 import logging
 import os
-import openai
 import tiktoken
 
 from typing import List, Tuple, Optional
 from pprint import pprint
 
+from openai import OpenAI
+from openai import AzureOpenAI
 from openai.types.chat import ChatCompletionMessageParam
 
 
-openai.api_key = os.environ.get("OPENAI_API_KEY")
-openai.organization = os.environ.get("OPENAI_ORGANIZATION_ID")
-openai.base_url = os.environ.get("OPENAI_BASE_URL")
+if os.environ.get("OPENAI_API_KEY"):
+    client = OpenAI(
+        api_key=os.environ.get("OPENAI_API_KEY", ""),
+        organization=os.environ.get("OPENAI_ORGANIZATION_ID", ""),
+        base_url=os.environ.get("OPENAI_BASE_URL", ""),
+    )
+else:
+    client = AzureOpenAI(
+        api_key=os.environ.get("AZURE_OPENAI_KEY", ""),
+        azure_endpoint=os.environ.get("AZURE_ENDPOINT", ""),
+        api_version=os.environ.get("AZURE_API_VERSION", ""),
+    )
 
 
 logger = logging.getLogger("app")
@@ -43,7 +53,7 @@ def chat(
             except ValueError as exc:
                 pass
 
-    model = os.environ.get("OPENAI_MODEL") or "gpt-3.5-turbo"
+    model = os.environ.get("OPENAI_MODEL") or "gpt-4o-mini"
 
     def count_tokens(text):
         encoding = tiktoken.encoding_for_model(model)
@@ -84,7 +94,7 @@ You are an AI chat bot named {name} operating in an IRC chat. Your role is to in
     ]
 
     # And run the query
-    response = openai.chat.completions.create(
+    response = client.chat.completions.create(
         model=model,
         messages=messages,
         temperature=0,
