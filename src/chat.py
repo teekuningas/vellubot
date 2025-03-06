@@ -11,6 +11,7 @@ from openai.types.chat import ChatCompletionMessageParam
 
 openai.api_key = os.environ.get("OPENAI_API_KEY")
 openai.organization = os.environ.get("OPENAI_ORGANIZATION_ID")
+openai.base_url = os.environ.get("OPENAI_BASE_URL")
 
 
 logger = logging.getLogger("app")
