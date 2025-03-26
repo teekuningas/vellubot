@@ -32,6 +32,15 @@ def chat(
     name: str,
     instruction: Optional[str] = None,
 ) -> List[Tuple[str, str]]:
+    """Process chat history and generate responses using OpenAI/Azure models.
+    
+    Args:
+        history: Chat message history as (username, message) tuples
+        name: Bot's display name
+        instruction: System instruction for the bot
+        
+    Returns:
+        New messages from the bot to send"""
     buffer_tokens = 64
     wrapper_tokens = 5
 

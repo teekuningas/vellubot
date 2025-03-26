@@ -12,7 +12,7 @@ logger = logging.getLogger("app")
 
 
 def rfc822_to_datetime(date_string: str) -> datetime:
-    """Convert rfc822 strings to tz-aware datetime objects."""
+    """Convert RFC822 date strings to timezone-aware datetime objects."""
     try:
         return datetime.strptime(date_string, "%a, %d %b %Y %H:%M:%S %Z")
     except ValueError:
@@ -23,7 +23,7 @@ def rfc822_to_datetime(date_string: str) -> datetime:
 
 
 def tori_date_to_datetime(date_string: str) -> datetime:
-    """Convert weird tori datetime strings to tz-aware datetime objects."""
+    """Convert Tori.fi date strings to Helsinki-timezone aware datetimes."""
 
     helsinki_tz = pytz.timezone("Europe/Helsinki")
 
@@ -59,18 +59,7 @@ def tori_date_to_datetime(date_string: str) -> datetime:
 
 
 def parse_tori(feed: str) -> List[Dict[str, Any]]:
-    """Return a list of standardized items given a url to tori.fi.
-
-    Should be of format [
-        {
-            'uid': 'abcd',
-            'title': 'ab cd',
-            'datetime': <datetime obj>,
-            'link': 'https://cat.cat'
-        },
-        ...
-    ]
-    """
+    """Parse a Tori.fi feed URL and return standardized items."""
     response = requests.get(feed)
     soup = BeautifulSoup(response.content, "lxml")
 
@@ -102,18 +91,7 @@ def parse_tori(feed: str) -> List[Dict[str, Any]]:
 
 
 def parse_rss(feed: str) -> List[Dict[str, Any]]:
-    """Return a list of standardized items given a url to .rss.
-
-    Should be of format [
-        {
-            'uid': 'abcd',
-            'title': 'ab cd',
-            'datetime': <datetime obj>,
-            'link': 'https://cat.cat'
-        },
-        ...
-    ]
-    """
+    """Parse an RSS feed URL and return standardized items."""
     response = requests.get(feed)
     soup = BeautifulSoup(response.content, "xml")
     rss_items = soup.find_all("item")
@@ -137,8 +115,16 @@ def check_feeds(
     check_length: int,
     seen: List[str],
 ) -> Tuple[List[Dict[str, Any]], List[str]]:
-    """Check all the feed urls for new items."""
-
+    """Check multiple feeds for new items matching filters.
+    
+    Args:
+        feeds: List of feed URLs to check
+        filters: List of regex patterns to filter items
+        check_length: Time window in seconds to consider items
+        seen: List of previously seen item UIDs
+        
+    Returns:
+        Tuple containing new items and updated seen UID list"""
     new_items = []
 
     for feed in feeds:
@@ -178,8 +164,7 @@ def check_feeds(
 
 
 def main_parsers() -> None:
-    """Run parser test app."""
-
+    """Run a test application for the feed parser."""
     feeds = [
         "https://www.tori.fi/recommerce/forsale/search?product_category=2.93.3215.8368"
     ]

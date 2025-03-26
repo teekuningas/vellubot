@@ -32,7 +32,7 @@ FILTERS = ["4070"]
 
 
 def split_message(msg, max_length=256):
-    """The IRC protocal has a max length of 512 bytes / msg, so safely split before that happens..
+    """The IRC protocol has a max length of 512 bytes / msg, so safely split before that happens.
     Note that 512 bytes does not mean 512 characters."""
     while msg:
         chunk, msg = msg[:max_length], msg[max_length:]
@@ -41,6 +41,7 @@ def split_message(msg, max_length=256):
 
 class Settings:
     def __init__(self, fname=None):
+        """Initialize settings with default values and optional file storage."""
         self.fname = fname
 
         # first initialize with default values
@@ -57,9 +58,10 @@ class Settings:
             try:
                 self.settings = self.load(fname)
             except Exception:
-                logger.exception("Could not intialize settings from file")
+                logger.exception("Could not initialize settings from file")
 
     def set(self, key, value):
+        """Set a setting value and persist it to file if configured."""
         self.settings[key] = value
 
         # persist to file
@@ -70,6 +72,7 @@ class Settings:
                 logger.exception("Could not save settings to file")
 
     def get(self, key):
+        """Get a setting value, refreshing from file if configured."""
         # refresh from file
         if self.fname:
             try:
@@ -80,10 +83,12 @@ class Settings:
         return self.settings[key]
 
     def save(self):
+        """Save current settings to file."""
         with open(self.fname, "w") as f:
             f.write(json.dumps(self.settings, indent=4))
 
     def load(self):
+        """Load settings from file and return them."""
         with open(self.fname, "r") as f:
             self.settings = json.load(f)
 
