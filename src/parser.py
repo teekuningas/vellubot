@@ -79,11 +79,12 @@ def parse_tori(feed: str) -> List[Dict[str, Any]]:
     items = []
     for card in cards:
         try:
-            a_tag = card.select("a")[0]
-            title = a_tag.contents[1]
-            link = a_tag.attrs["href"]
-            uid = a_tag.attrs["href"].split("/")[-1]
-            tori_date = card.select("div.text-xs")[0].contents[1].contents[0]
+            title = card.select("h2")[0].select("a")[0].contents[1]
+            link = card.select("h2")[0].select("a")[0].attrs["href"]
+            uid = card.select("h2")[0].select("a")[0].attrs["href"].split("/")[-1]
+            tori_date = (
+                card.select("div.m-8")[0].contents[-1].select("span")[-1].contents[0]
+            )
 
             datetime_ = tori_date_to_datetime(tori_date.strip())
             items.append(
@@ -98,6 +99,7 @@ def parse_tori(feed: str) -> List[Dict[str, Any]]:
             logger.exception(
                 "Unexpected 'article' card structure when parsing tori feed."
             )
+
     return items
 
 
