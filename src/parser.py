@@ -3,7 +3,7 @@ import re
 import pytz
 import requests
 import time
-from bs4 import BeautifulSoup
+from bs4 import BeautifulSoup, NavigableString, Tag
 from datetime import datetime, timedelta, timezone
 from typing import Any, Dict, List, Tuple
 
@@ -79,14 +79,16 @@ def parse_tori(feed: str) -> List[Dict[str, Any]]:
     items = []
     for card in cards:
         try:
-            title = card.select("h2")[0].select("a")[0].contents[1]
-            link = card.select("h2")[0].select("a")[0].attrs["href"]
-            uid = card.select("h2")[0].select("a")[0].attrs["href"].split("/")[-1]
-            tori_date = (
-                card.select("div.m-8")[0].contents[-1].select("span")[-1].contents[0]
-            )
+            link_element = card.select("h2")[0].select("a")[0]
+            title = str(link_element.contents[1])
+            link = str(link_element.attrs["href"])
+            uid = link.split("/")[-1]
+            date_container = card.select("div.m-8")[0].contents[-1]
+            if not isinstance(date_container, Tag):
+                continue
+            tori_date = date_container.select("span")[-1].contents[0]
 
-            datetime_ = tori_date_to_datetime(tori_date.strip())
+            datetime_ = tori_date_to_datetime(str(tori_date).strip())
             items.append(
                 {
                     "datetime": datetime_,
@@ -122,14 +124,28 @@ def parse_rss(feed: str) -> List[Dict[str, Any]]:
 
     items = []
     for item in rss_items:
-        items.append(
-            {
-                "datetime": rfc822_to_datetime(item.pubDate.string),
-                "link": item.link.string,
-                "title": item.title.string,
-                "uid": item.guid.string,
-            }
-        )
+        if not isinstance(item, Tag):
+            continue
+
+        pub_date_tag = item.find("pubDate")
+        link_tag = item.find("link")
+        title_tag = item.find("title")
+        guid_tag = item.find("guid")
+
+        pub_date = pub_date_tag.text if pub_date_tag else None
+        link = link_tag.text if link_tag else None
+        title = title_tag.text if title_tag else None
+        guid = guid_tag.text if guid_tag else None
+
+        if pub_date and link and title and guid:
+            items.append(
+                {
+                    "datetime": rfc822_to_datetime(pub_date),
+                    "link": link,
+                    "title": title,
+                    "uid": guid,
+                }
+            )
     return items
 
 
@@ -198,6 +214,7 @@ def main_parsers() -> None:
             new_items, seen = check_feeds(feeds, filters, check_length, seen)
             for item in new_items:
                 logger.info(f"New item: {item['link']}")
+                print(f"New item: {item['link']}")
         except Exception as exc:
             logger.exception("Checking the feeds failed.")
 
