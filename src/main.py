@@ -269,7 +269,11 @@ class MyBot(SingleServerIRCBot):
         if (msg.startswith("!chat") or msg.startswith(f"{self.nickname}: ")) and len(
             msg.split(" ")
         ) > 1:
-            value = " ".join(msg.split(" ")[1:])
+            if msg.startswith("!chat"):
+                value = " ".join(msg.split(" ")[1:])
+            else:
+                # the bot's name is kept in the value
+                value = msg
 
             # get response from openai
             try:
