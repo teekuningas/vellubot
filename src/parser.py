@@ -8,7 +8,7 @@ from datetime import datetime, timedelta, timezone
 from typing import Any, Dict, List, Tuple
 
 
-logger = logging.getLogger("app")
+logger = logging.getLogger("parser")
 
 
 def rfc822_to_datetime(date_string: str) -> datetime:
