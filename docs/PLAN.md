@@ -302,9 +302,11 @@ URGE_MSG_DIVISOR = 3.0     # 3 messages reaches urge 1.0
 
 Remember to restore production values (`50.0` / `20.0`) before deploying.
 
-### IRC debug announcements
+### Logging Strategy for Debugging
 
-Add a `!debug` mode where the bot announces its internal state out loud after every tick and trigger — current urge, threshold, whether it spoke or stayed silent, and memory slot count. Crucially, **these debug announcements must not be recorded in the agent's own history** (add them to the channel via `send_message` without calling `agent.add_message`), so the agent never sees its own debug output and it doesn't pollute the context.
+Instead of an IRC `!debug` command which pollutes the channel, rely on background logs using `logger.getLogger("agent")`.
+- **INFO level:** Log a summary line when the urge threshold is crossed and the LLM is triggered (showing urge, threshold, history count, memory count), followed by another log containing the raw JSON response from the LLM.
+- **DEBUG level:** Log the current urge and threshold on every background tick, even when it doesn't result in an LLM call, so developers can easily `tail -f` and watch the urge climbing.
 
 ### Things to verify
 
@@ -322,6 +324,17 @@ Go through the Finnish system prompt carefully before deploying:
 - Are the memory instructions clear and unambiguous?
 - Does the JSON schema example match the actual expected format?
 - Is the language/brevity guidance strong enough to prevent verbose responses?
+
+---
+
+## 13. Pending Refinements (Session Findings)
+
+Before full deployment, the following refinements were identified and must be implemented:
+1. **Timezone Awareness:** Both the `now_str` in the system prompt and the timestamps in the chat history use naive system time. These must be explicitly formatted to include timezone information (e.g., `+0200` or `Europe/Helsinki`) so the LLM correctly understands local time relative to user messages.
+2. **System Prompt Tweak:** Add a sentence encouraging spontaneous interaction without forcing it: *"Jos sinusta tuntuu siltä, voit myös rikkoa hiljaisuuden esimerkiksi kysymällä jotain. Se ei kuitenkaan ole välttämätöntä."*
+3. **Threading and Blocking Risks:** 
+   - The feed parser (`check_feeds`) currently runs synchronously in the same loop as `agent.tick()`. If fetching feeds hangs, it delays the agent's time-based checking.
+   - IRC library `privmsg` calls are being executed from background threads, which may not be completely thread-safe. Consider dispatching outgoing messages back to the main thread or implementing a queue if socket issues arise.
 
 ---
 
