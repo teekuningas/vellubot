@@ -1,23 +1,27 @@
 import irc
 import logging
 import os
+import queue
 import time
 import json
+from concurrent.futures import ThreadPoolExecutor
 from irc.bot import SingleServerIRCBot
-from threading import Thread
-from typing import List, Optional, Tuple
+from typing import List, Optional
 from src.parser import check_feeds
-from src.chat import chat
+from src.agent import AgentState
 
+
+log_level_str = os.environ.get("LOG_LEVEL", "INFO").upper()
+log_level = getattr(logging, log_level_str, logging.INFO)
 
 logging.basicConfig(
-    level=logging.DEBUG,
+    level=log_level,
     format="%(asctime)s %(levelname)s:%(name)s:%(message)s",
     datefmt="%Y-%m-%d %H:%M:%S",
 )
 
 
-logger = logging.getLogger("app")
+logger = logging.getLogger("main")
 
 
 # default values, overridable by interactive commands
@@ -49,13 +53,13 @@ class Settings:
             "check_interval": CHECK_INTERVAL,
             "check_length": CHECK_LENGTH,
             "filters": FILTERS,
-            "instruction": None,
+            "chat_enabled": True,
         }
 
         # then if possible, overwrite from file
         if fname:
             try:
-                self.settings = self.load(fname)
+                self.settings = self.load()
             except Exception:
                 logger.exception("Could not intialize settings from file")
 
@@ -69,15 +73,8 @@ class Settings:
             except Exception:
                 logger.exception("Could not save settings to file")
 
-    def get(self, key):
-        # refresh from file
-        if self.fname:
-            try:
-                self.settings = self.load()
-            except Exception:
-                logger.exception("Could not refresh settings from file")
-
-        return self.settings[key]
+    def get(self, key, default=None):
+        return self.settings.get(key, default)
 
     def save(self):
         with open(self.fname, "w") as f:
@@ -101,6 +98,7 @@ class MyBot(SingleServerIRCBot):
         port: int = 6667,
         sasl_password: Optional[str] = None,
         settings_fname: Optional[str] = None,
+        memory_fname: Optional[str] = None,
     ) -> None:
         """The constructor."""
 
@@ -122,28 +120,32 @@ class MyBot(SingleServerIRCBot):
         self.channel = channel
         self.nickname = nickname
         self.seen: List[str] = []
-        self.history: List[Tuple[str, str]] = []
+        self.agent = AgentState(nickname, memory_file=memory_fname)
+        self._outbox: queue.Queue = queue.Queue()
+        self._executor = ThreadPoolExecutor(max_workers=2)
+        self._feed_busy = False
 
     def on_nicknameinuse(self, c: irc.client.Connection, e: irc.client.Event) -> None:
         """If nickname is in use on join, try a different name."""
         new_name = c.get_nickname() + "_"
         c.nick(new_name)
         self.nickname = new_name
+        self.agent.bot_name = new_name
 
     def on_welcome(self, c: irc.client.Connection, e: irc.client.Event) -> None:
         """On welcome to the server, join the channel and start the main loop."""
         c.join(self.channel)
-
-        # start the main loop
-        self.start_main_loop()
+        self.reactor.scheduler.execute_every(0.5, self._drain_outbox)
+        self.reactor.scheduler.execute_after(0, self._tick_feeds)
+        self.reactor.scheduler.execute_after(0, self._tick_agent)
 
     def on_pubmsg(self, c: irc.client.Connection, e: irc.client.Event) -> None:
-        """Handle interactive parts."""
+        """Handle public messages: feed/filter commands and agent triggering."""
         msg = e.arguments[0]
 
         try:
             username = e.source.split("!")[0]
-        except Exception as exc:
+        except Exception:
             username = "unknown"
 
         commands = []
@@ -221,22 +223,6 @@ class MyBot(SingleServerIRCBot):
             except Exception:
                 self.send_message("Seems you provided an invalid index.")
 
-        commands.append(("!inst <instruction>", "Set new system instruction"))
-        if msg.startswith("!inst"):
-            if len(msg.split(" ")) > 1:
-                self.settings.set("instruction", " ".join(msg.split(" ")[1:]))
-            else:
-                self.settings.set("instruction", None)
-
-            self.send_message(
-                "Setting new instruction: " + str(self.settings.get("instruction"))
-            )
-
-        commands.append(("!definst", "Set default system instruction"))
-        if msg == "!definst":
-            self.settings.set("instruction", None)
-            self.send_message("Using default instruction.")
-
         commands.append(("!check_interval", "Show check interval"))
         if msg == "!check_interval":
             self.send_message(
@@ -265,38 +251,16 @@ class MyBot(SingleServerIRCBot):
             except ValueError:
                 pass
 
-        commands.append((f"!chat <msg> (or `{self.nickname}: <msg>`)", "Chat with me!"))
-        if (msg.startswith("!chat") or msg.startswith(f"{self.nickname}: ")) and len(
-            msg.split(" ")
-        ) > 1:
-            if msg.startswith("!chat"):
-                value = " ".join(msg.split(" ")[1:])
+        commands.append(("!chat_enabled", "Toggle autonomous chat on/off"))
+        if msg == "!chat_enabled":
+            enabled = self.settings.get("chat_enabled", True)
+            self.settings.set("chat_enabled", not enabled)
+            if enabled:
+                # was on, now off — reset urge so it doesn't fire immediately on re-enable
+                self.agent.reset_urge()
+                self.send_message("Chat disabled.")
             else:
-                # the bot's name is kept in the value
-                value = msg
-
-            # get response from openai
-            try:
-                new_history = chat(
-                    self.history + [(username, value)],
-                    self.nickname,
-                    self.settings.get("instruction"),
-                )
-            except Exception as exc:
-                new_history = [(self.nickname, "Something went wrong.. :(")]
-                logger.exception("Something went wrong when talking to openai:")
-
-            # send the response as messages
-            for item in new_history:
-                time.sleep(1.0)
-                self.send_message(f"{item[1]}")
-
-            # update history with old history, current msg and openai responses
-            self.history = self.history + [(username, msg)] + new_history
-
-        else:
-            # update history also when not explicitly chatting
-            self.history = self.history + [(username, msg)]
+                self.send_message("Chat enabled.")
 
         commands.append(("!commands", "Show this message"))
         if msg == "!commands":
@@ -306,35 +270,83 @@ class MyBot(SingleServerIRCBot):
                 time.sleep(1.0)
                 self.send_message(command.ljust(padding) + description)
 
-    def send_message(self, msg):
-        """Helper to send messages."""
+        # record message and trigger agent if urge reached
+        triggered = self.agent.add_message(username, msg)
+        if triggered and self.settings.get("chat_enabled", True):
+            self._submit_agent_run()
+
+    def _drain_outbox(self) -> None:
+        """Drain queued outgoing messages — called by reactor every 0.5s on main thread."""
+        while True:
+            try:
+                msg = self._outbox.get_nowait()
+                for chunk in split_message(msg):
+                    self.connection.privmsg(self.channel, chunk)
+            except queue.Empty:
+                break
+
+    def _submit_agent_run(self) -> None:
+        """Snapshot channel users (safe: main thread) and submit agent worker to executor."""
+        channel_users = None
+        if self.channel in self.channels:
+            channel_users = list(self.channels[self.channel].users())
+        self._executor.submit(self._agent_worker, channel_users)
+
+    def _agent_worker(self, channel_users: Optional[List[str]]) -> None:
+        """Run the agent LLM call in the thread pool. Puts response in outbox."""
+        try:
+            response = self.agent.run(channel_users=channel_users)
+            if response:
+                self._outbox.put(response)
+        except Exception:
+            logger.exception("Agent worker failed")
+
+    def _tick_feeds(self) -> None:
+        """Reactor-scheduled feed tick — runs on main thread, self-reschedules."""
+        try:
+            if not self._feed_busy:
+                self._feed_busy = True
+                self._executor.submit(self._feed_worker)
+        except Exception:
+            logger.exception("Feed tick failed")
+        finally:
+            interval = self.settings.get("check_interval", CHECK_INTERVAL)
+            self.reactor.scheduler.execute_after(interval, self._tick_feeds)
+
+    def _feed_worker(self) -> None:
+        """Fetch feeds in the thread pool. Puts new-item messages in outbox."""
+        try:
+            new_items, self.seen = check_feeds(
+                self.settings.get("feeds", []),
+                self.settings.get("filters", []),
+                self.settings.get("check_length", CHECK_LENGTH),
+                self.seen,
+            )
+            for item in new_items:
+                feed_msg = f"New item: {item['link']} | {item['title']}"
+                self._outbox.put(feed_msg)
+                self.agent.add_message(self.nickname, feed_msg)
+        except Exception:
+            logger.exception("Exception while checking the feeds:")
+            self._outbox.put("Checking the feeds failed.")
+        finally:
+            self._feed_busy = False
+
+    def _tick_agent(self) -> None:
+        """Reactor-scheduled agent tick — runs on main thread, self-reschedules."""
+        try:
+            if self.settings.get("chat_enabled", True) and self.agent.tick():
+                self._submit_agent_run()
+        except Exception:
+            logger.exception("Agent tick failed")
+        finally:
+            interval = self.settings.get("check_interval", CHECK_INTERVAL)
+            self.reactor.scheduler.execute_after(interval, self._tick_agent)
+
+    def send_message(self, msg: str) -> None:
+        """Send a message directly — only call from the main (reactor) thread."""
         for chunk in split_message(msg):
             self.connection.privmsg(self.channel, chunk)
-
-    def start_main_loop(self) -> None:
-        """Start the periodical main loop."""
-
-        def loop_check() -> None:
-            """Run the main loop."""
-            while True:
-                # check if new interesting items
-                try:
-                    new_items, self.seen = check_feeds(
-                        self.settings.get("feeds"),
-                        self.settings.get("filters"),
-                        self.settings.get("check_length"),
-                        self.seen,
-                    )
-                    # if yes, msg to channel
-                    for item in new_items:
-                        self.send_message(f"New item: {item['link']} | {item['title']}")
-                except Exception as exc:
-                    self.send_message(f"Checking the feeds failed.")
-                    logger.exception("Exception while checking the feeds:")
-
-                time.sleep(self.settings.get("check_interval"))
-
-        Thread(target=loop_check).start()
 
 
 def main_bot(
@@ -344,9 +356,12 @@ def main_bot(
     port: int,
     sasl_password: Optional[str],
     settings_fname: Optional[str],
+    memory_fname: Optional[str],
 ) -> None:
     """Start the ircbot."""
-    bot = MyBot(channel, nickname, server, port, sasl_password, settings_fname)
+    bot = MyBot(
+        channel, nickname, server, port, sasl_password, settings_fname, memory_fname
+    )
     bot.start()
 
 
@@ -357,6 +372,7 @@ def main():
     port = int(os.environ.get("BOT_PORT", "6667"))
     sasl_password = os.environ.get("BOT_SASL_PASSWORD", None)
     settings_fname = os.environ.get("SETTINGS_FNAME", None)
+    memory_fname = os.environ.get("AGENT_MEMORY_FILE", None)
     main_bot(
         channel,
         nickname,
@@ -364,6 +380,7 @@ def main():
         port,
         sasl_password=sasl_password,
         settings_fname=settings_fname,
+        memory_fname=memory_fname,
     )
 
 

@@ -25,7 +25,6 @@
         ps.beautifulsoup4
         ps.lxml
         ps.openai
-        ps.tiktoken
         ps.black
         (ps.mypy.overridePythonAttrs (oldAttrs: { doCheck = false; }))
       ]);
