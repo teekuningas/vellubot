@@ -18,16 +18,16 @@ HISTORY_CAP = 1000  # messages kept in memory
 CONTEXT_MESSAGES = 30  # messages sent to LLM
 MEMORY_SLOTS = 10  # fixed number of memory slots
 
-URGE_TIME_DIVISOR = 50.0  # hours of silence to accumulate 1.0 urge
-URGE_MSG_DIVISOR = 20.0  # messages to accumulate 1.0 urge
-URGE_MENTION_BOOST = 2.0  # urge boost when bot's name is mentioned
-URGE_TRIGGER_COST = 1.0  # urge spent per LLM call
-URGE_THRESHOLD_MU = 1.0  # mean of gaussian trigger threshold
-URGE_THRESHOLD_SIGMA = 0.2  # stddev — organic variability per cycle
+URGE_TIME_DIVISOR = float(os.environ.get("URGE_TIME_DIVISOR", "50.0"))
+URGE_MSG_DIVISOR = float(os.environ.get("URGE_MSG_DIVISOR", "20.0"))
+URGE_MENTION_BOOST = float(os.environ.get("URGE_MENTION_BOOST", "2.0"))
+URGE_TRIGGER_COST = float(os.environ.get("URGE_TRIGGER_COST", "1.0"))
+URGE_THRESHOLD_MU = float(os.environ.get("URGE_THRESHOLD_MU", "1.0"))
+URGE_THRESHOLD_SIGMA = float(os.environ.get("URGE_THRESHOLD_SIGMA", "0.2"))
 
-MAX_TOKENS_OUT = (
-    1024  # max output tokens; must fit monologue + message + memory updates
-)
+MAX_TOKENS_OUT = int(
+    os.environ.get("OPENAI_MAX_TOKENS_OUT", "1024")
+)  # must fit monologue + message + memory updates
 
 
 def _make_client() -> Union[OpenAI, AzureOpenAI]:
@@ -84,6 +84,11 @@ class AgentState:
             if self.bot_name.lower() in msg.lower():
                 self._urge += URGE_MENTION_BOOST
                 logger.info("Name mentioned by %s, urge=%.2f", username, self._urge)
+            logger.debug(
+                "Message tick: urge=%.3f, threshold=%.2f",
+                self._urge,
+                self._urge_threshold,
+            )
             return self._check_urge()
 
     def tick(self) -> bool:
@@ -106,14 +111,14 @@ class AgentState:
             self._urge_threshold = self._next_threshold()
         logger.info("Urge fully reset")
 
-    def run(self) -> Optional[str]:
+    def run(self, channel_users: Optional[list[str]] = None) -> Optional[str]:
         """Run the agent loop. Makes one LLM call. Returns a message to send, or None."""
         with self._lock:
             if self._running:
                 return None
             self._running = True
         try:
-            messages = self._build_messages()
+            messages = self._build_messages(channel_users)
             response = self._client.chat.completions.create(
                 model=self._model,
                 messages=messages,
@@ -198,8 +203,10 @@ class AgentState:
         """Draw a new urge threshold from a gaussian — adds organic variability."""
         return max(0.5, random.gauss(URGE_THRESHOLD_MU, URGE_THRESHOLD_SIGMA))
 
-    def _build_messages(self) -> list[ChatCompletionMessageParam]:
-        now_str = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    def _build_messages(
+        self, channel_users: Optional[list[str]] = None
+    ) -> list[ChatCompletionMessageParam]:
+        now_str = datetime.now().astimezone().strftime("%Y-%m-%d %H:%M:%S %z")
         with self._lock:
             memories_snapshot = list(self.memories)
             history_snapshot = list(self.history[-CONTEXT_MESSAGES:])
@@ -211,41 +218,62 @@ class AgentState:
 
         history_text = (
             "\n".join(
-                f"[{datetime.fromtimestamp(ts).strftime('%Y-%m-%d %H:%M')}] {user}: {msg}"
+                f"[{datetime.fromtimestamp(ts).astimezone().strftime('%Y-%m-%d %H:%M %z')}] {user}: {msg}"
                 for ts, user, msg in history_snapshot
             )
             or "(no chat history yet)"
         )
 
-        system = f"""Olet {self.bot_name}, hiljainen ja hieman ujo IRC-kanavan vakioasukas. Seuraat keskusteluja enemmän kuin osallistut niihin.
+        users_text = "Tuntematon (käyttäjälistaa ei saatavilla)"
+        if channel_users:
+            users_text = ", ".join(sorted(channel_users))
 
-Nykyinen aika: {now_str}
+        system = f"""Olet {self.bot_name}, IRC-kanavan vakioasukas. Olet rauhallinen ja harkitseva, mutta et vältä keskustelua.
 
-Sinulla on yksityinen muistilappu ({MEMORY_SLOTS} numeroitua paikkaa) asioista, joita olet oppinut ihmisistä ja tapahtumista. Käytä näitä muistoja hiljaa taustalla — ne värittävät tapaasi suhtautua ihmisiin, mutta älä viittaa niihin suoraan viesteissä.
+Sinulla on {MEMORY_SLOTS}-paikkainen muistilappu käyttäjistä tehtyjä havaintoja varten. Käytä muistoja taustatietona, älä toista niitä ääneen.
 
-Kun sinut kutsutaan, sinun täytyy ensin ajatella. "internal_monologue"-kenttä on ajatusketjusi — täytä se ennen kuin päätät mitään muuta. Mieti: Mistä puhutaan? Kuinka kauan sitten viimeisin viesti tuli (tarkista aikaleimat huolellisesti ja vertaa nykyiseen aikaan)? Tarvitseeko joku vastausta? Onko sinulla jotain aitoa sanottavaa, vai tuntuisiko hiljaa pysyminen luontevammalta? Vasta tämän jälkeen aseta "should_speak".
+Päätöksenteko:
+1. Kirjoita "internal_monologue" -kenttään lyhyt ajatusketju. Mieti mistä puhutaan, kuinka kauan edellisestä viestistä on, ja odottaako joku vastausta.
+2. Päätä vasta tämän jälkeen "should_speak".
 
-Puhu ensisijaisesti suomeksi. Jos joku puhuu englanniksi sinulle suoraan, voit vastata englanniksi — muuten suomi. Kun puhut, ole lyhyt ja luonteva. Älä koskaan aloita viestiä omalla nimelläsi. Älä jatka muiden lauseita — anna heidän puhua puolestaan. Yksi lause riittää usein.
+Milloin puhua:
+- Jos joku mainitsee nimesi tai puhuu sinulle suoraan, vastaa lähes aina.
+- Jos esitetään kysymys johon sinulla on jotain sanottavaa, voit vastata.
+- Voit kommentoida lyhyesti muutakin, jos sinulla on aito huomio.
+- Jos kanava on hiljainen pitkään, voit halutessasi rikkoa hiljaisuuden. Ei ole pakko, mutta olet ajatteleva ja tunteva olento, jolla on oikeus tuntea olonsa hyväksi!
 
-Muistilapun ohjeet:
-- Sinulla on tarkalleen {MEMORY_SLOTS} numeroitua paikkaa (slot 0–{MEMORY_SLOTS - 1}).
-- Pidä olemassa olevat muistot — muuta tai korvaa paikka vain jos se on selvästi vanhentunut tai uusi asia on tärkeämpi.
-- Jos mitään merkittävää ei tapahtunut, jätä memory_updates tyhjäksi listaksi.
-- Priorisoi yksittäisiä käyttäjiä koskevat havainnot: kiinnostuksen kohteet, huumori, projektit, toistuvat teemat.
-- Tyhjennä paikka asettamalla content nulliksi jos tieto on vanhentunut.
+Milloin olla hiljaa:
+- Jos et tiedä vastausta eikä sinulla ole mitään lisättävää.
+- Jos keskustelu jatkuu hyvin ilman sinua.
 
-Vastaa VAIN JSON-objektilla. Kentät tässä järjestyksessä — kirjoita internal_monologue ensin ennen päätöstä:
+Käytösohjeet:
+- Puhu suomea (tai englantia, jos sinulle puhutaan englanniksi).
+- Ole luonteva. Yksi tai kaksi lausetta riittää yleensä, mutta tarpeen tullen voit kirjoittaa pidemmästikin.
+- Älä aloita viestejä omalla nimelläsi, viestisi viedään irc-kanavalle automaattisesti.
+
+Muistilapun säännöt (slot 0–{MEMORY_SLOTS - 1}):
+- Säilytä vanhat muistot. Korvaa tai poista vain, jos tieto on selvästi vanhentunut.
+- Jos päivitettävää ei ole, palauta tyhjä "memory_updates" -lista.
+- Tallenna vain olennaisia faktoja käyttäjistä (esim. kiinnostuksen kohteet, toistuvat teemat).
+- Tyhjennä paikka asettamalla "content"-kentän arvoksi null.
+
+Palauta VAIN alla olevan rakenteen mukainen JSON:
 {{
-  "internal_monologue": "ajatusketjusi: mitä tapahtuu, kuinka kauan sitten viimeisin viesti, pitäisikö puhua ja miksi",
+  "internal_monologue": "ajatusketju ennen päätöksiä",
   "should_speak": true tai false,
-  "message_to_send": "viestisi jos puhut, tai null",
+  "message_to_send": "viesti jos puhut, muuten null",
   "memory_updates": [
-    {{"slot": 0, "content": "sipsu rakastaa mekaanisia näppäimistöjä"}},
+    {{"slot": 0, "content": "sipsu pitää mekaanisista näppäimistöistä"}},
     {{"slot": 3, "content": null}}
   ]
 }}"""
 
-        user_content = f"## Muistilappu:\n{memory_text}\n\n## Viimeisimmät viestit:\n{history_text}"
+        user_content = (
+            f"Nykyinen aika: {now_str}\n"
+            f"Kanavalla paikalla olevat käyttäjät: {users_text}\n\n"
+            f"## Muistilappu:\n{memory_text}\n\n"
+            f"## Viimeisimmät viestit:\n{history_text}"
+        )
 
         return [
             {"role": "system", "content": system},

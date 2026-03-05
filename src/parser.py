@@ -71,7 +71,7 @@ def parse_tori(feed: str) -> List[Dict[str, Any]]:
         ...
     ]
     """
-    response = requests.get(feed)
+    response = requests.get(feed, timeout=30)
     soup = BeautifulSoup(response.content, "lxml")
 
     cards = soup.select("article")
@@ -118,7 +118,7 @@ def parse_rss(feed: str) -> List[Dict[str, Any]]:
         ...
     ]
     """
-    response = requests.get(feed)
+    response = requests.get(feed, timeout=30)
     soup = BeautifulSoup(response.content, "xml")
     rss_items = soup.find_all("item")
 
