@@ -8,7 +8,7 @@ from concurrent.futures import ThreadPoolExecutor
 from irc.bot import SingleServerIRCBot
 from typing import List, Optional
 from src.parser import check_feeds
-from src.agent import AgentState
+from src.agent import AgentState, call_llm
 
 
 log_level_str = os.environ.get("LOG_LEVEL", "INFO").upper()
@@ -123,12 +123,12 @@ class MyBot(SingleServerIRCBot):
         self.nickname = nickname
         self.seen_fname = seen_fname
         self.seen: List[str] = self._load_seen()
-        self._seen_dirty: bool = False
         self.agent = AgentState(
             nickname, memory_fname=memory_fname, history_fname=history_fname
         )
         self._outbox: queue.Queue = queue.Queue()
         self._executor = ThreadPoolExecutor(max_workers=2)
+        self._agent_running = False
         self._feed_busy = False
 
     def _load_seen(self) -> List[str]:
@@ -300,75 +300,108 @@ class MyBot(SingleServerIRCBot):
                 time.sleep(1.0)
                 self.send_message(command.ljust(padding) + description)
 
-        # record message and trigger agent if urge reached
-        triggered = self.agent.add_message(username, msg)
-        if triggered and self.settings.get("chat_enabled", True):
+        # record message and maybe trigger agent
+        self.agent.add_message(username, msg)
+        self._maybe_trigger_agent()
+
+    def _maybe_trigger_agent(self) -> None:
+        """Check if agent should speak — called from main thread only."""
+        if self._agent_running:
+            return
+        if not self.settings.get("chat_enabled", True):
+            return
+        if self.agent.should_trigger():
             self._submit_agent_run()
 
     def _drain_outbox(self) -> None:
-        """Drain queued outgoing messages — called by reactor every 0.5s on main thread."""
+        """Process worker results — called by reactor every 0.5s on main thread."""
         while True:
             try:
-                msg = self._outbox.get_nowait()
-                for chunk in split_message(msg):
-                    self.connection.privmsg(self.channel, chunk)
+                item = self._outbox.get_nowait()
             except queue.Empty:
                 break
 
+            if not isinstance(item, tuple):
+                continue
+
+            tag = item[0]
+
+            if tag == "agent":
+                self._agent_running = False
+                result = item[1]
+                if result is not None:
+                    msg = self.agent.apply_llm_result(result)
+                    if msg:
+                        for chunk in split_message(msg):
+                            self.connection.privmsg(self.channel, chunk)
+
+            elif tag == "feed":
+                self._feed_busy = False
+                new_items = item[1]
+                self.seen = item[2]
+                for feed_item in new_items:
+                    feed_msg = f"New item: {feed_item['link']} | {feed_item['title']}"
+                    for chunk in split_message(feed_msg):
+                        self.connection.privmsg(self.channel, chunk)
+                    self.agent.add_message(self.nickname, feed_msg)
+
+            elif tag == "feed_error":
+                self._feed_busy = False
+                for chunk in split_message(item[1]):
+                    self.connection.privmsg(self.channel, chunk)
+
     def _submit_agent_run(self) -> None:
-        """Snapshot channel users (safe: main thread) and submit agent worker to executor."""
+        """Build LLM messages on main thread, submit pure worker to executor."""
         channel_users = None
         if self.channel in self.channels:
             channel_users = list(self.channels[self.channel].users())
-        self._executor.submit(self._agent_worker, channel_users)
+        messages = self.agent.build_llm_messages(channel_users)
+        self._agent_running = True
+        self._executor.submit(
+            self._agent_worker, self.agent.client, self.agent.model, messages
+        )
 
-    def _agent_worker(self, channel_users: Optional[List[str]]) -> None:
-        """Run the agent LLM call in the thread pool. Puts response in outbox."""
+    def _agent_worker(self, client, model, messages) -> None:
+        """Pure worker: calls LLM, puts result in outbox. No shared state access."""
         try:
-            response = self.agent.run(channel_users=channel_users)
-            if response:
-                self._outbox.put(response)
+            result = call_llm(client, model, messages)
+            self._outbox.put(("agent", result))
         except Exception:
             logger.exception("Agent worker failed")
+            self._outbox.put(("agent", None))
 
     def _tick_feeds(self) -> None:
         """Reactor-scheduled feed tick — runs on main thread, self-reschedules."""
         try:
             if not self._feed_busy:
                 self._feed_busy = True
-                self._executor.submit(self._feed_worker)
+                feeds = list(self.settings.get("feeds", []))
+                filters = list(self.settings.get("filters", []))
+                check_length = self.settings.get("check_length", CHECK_LENGTH)
+                seen = list(self.seen)
+                self._executor.submit(
+                    self._feed_worker, feeds, filters, check_length, seen
+                )
         except Exception:
             logger.exception("Feed tick failed")
         finally:
             interval = self.settings.get("check_interval", CHECK_INTERVAL)
             self.reactor.scheduler.execute_after(interval, self._tick_feeds)
 
-    def _feed_worker(self) -> None:
-        """Fetch feeds in the thread pool. Puts new-item messages in outbox."""
+    def _feed_worker(self, feeds, filters, check_length, seen) -> None:
+        """Pure worker: checks feeds, puts results in outbox. No shared state access."""
         try:
-            new_items, self.seen = check_feeds(
-                self.settings.get("feeds", []),
-                self.settings.get("filters", []),
-                self.settings.get("check_length", CHECK_LENGTH),
-                self.seen,
-            )
-            for item in new_items:
-                feed_msg = f"New item: {item['link']} | {item['title']}"
-                self._outbox.put(feed_msg)
-                self.agent.add_message(self.nickname, feed_msg)
-            if new_items:
-                self._seen_dirty = True
+            new_items, updated_seen = check_feeds(feeds, filters, check_length, seen)
+            self._outbox.put(("feed", new_items, updated_seen))
         except Exception:
             logger.exception("Exception while checking the feeds:")
-            self._outbox.put("Checking the feeds failed.")
-        finally:
-            self._feed_busy = False
+            self._outbox.put(("feed_error", "Checking the feeds failed."))
 
     def _tick_agent(self) -> None:
         """Reactor-scheduled agent tick — runs on main thread, self-reschedules."""
         try:
-            if self.settings.get("chat_enabled", True) and self.agent.tick():
-                self._submit_agent_run()
+            self.agent.tick()
+            self._maybe_trigger_agent()
         except Exception:
             logger.exception("Agent tick failed")
         finally:
@@ -376,12 +409,11 @@ class MyBot(SingleServerIRCBot):
             self.reactor.scheduler.execute_after(interval, self._tick_agent)
 
     def _tick_save(self) -> None:
-        """Flush dirty state to disk — called by reactor every 30s on main thread."""
+        """Unconditionally flush state to disk — called by reactor every 30s."""
         try:
-            self.agent.save_if_dirty()
-            if self._seen_dirty:
-                self._seen_dirty = False
-                self._save_seen()
+            self.agent.save_memories()
+            self.agent.save_history()
+            self._save_seen()
         except Exception:
             logger.exception("Save tick failed")
 
