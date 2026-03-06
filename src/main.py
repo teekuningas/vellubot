@@ -99,6 +99,8 @@ class MyBot(SingleServerIRCBot):
         sasl_password: Optional[str] = None,
         settings_fname: Optional[str] = None,
         memory_fname: Optional[str] = None,
+        history_fname: Optional[str] = None,
+        seen_fname: Optional[str] = None,
     ) -> None:
         """The constructor."""
 
@@ -119,11 +121,38 @@ class MyBot(SingleServerIRCBot):
 
         self.channel = channel
         self.nickname = nickname
-        self.seen: List[str] = []
-        self.agent = AgentState(nickname, memory_file=memory_fname)
+        self.seen_fname = seen_fname
+        self.seen: List[str] = self._load_seen()
+        self._seen_dirty: bool = False
+        self.agent = AgentState(
+            nickname, memory_fname=memory_fname, history_fname=history_fname
+        )
         self._outbox: queue.Queue = queue.Queue()
         self._executor = ThreadPoolExecutor(max_workers=2)
         self._feed_busy = False
+
+    def _load_seen(self) -> List[str]:
+        if not self.seen_fname:
+            return []
+        try:
+            with open(self.seen_fname, "r") as f:
+                data = json.load(f)
+            if isinstance(data, list):
+                return [str(x) for x in data]
+        except FileNotFoundError:
+            pass
+        except Exception:
+            logger.exception("Failed to load seen from %s", self.seen_fname)
+        return []
+
+    def _save_seen(self) -> None:
+        if not self.seen_fname:
+            return
+        try:
+            with open(self.seen_fname, "w") as f:
+                json.dump(self.seen, f, ensure_ascii=False)
+        except Exception:
+            logger.exception("Failed to save seen to %s", self.seen_fname)
 
     def on_nicknameinuse(self, c: irc.client.Connection, e: irc.client.Event) -> None:
         """If nickname is in use on join, try a different name."""
@@ -136,6 +165,7 @@ class MyBot(SingleServerIRCBot):
         """On welcome to the server, join the channel and start the main loop."""
         c.join(self.channel)
         self.reactor.scheduler.execute_every(0.5, self._drain_outbox)
+        self.reactor.scheduler.execute_every(30, self._tick_save)
         self.reactor.scheduler.execute_after(0, self._tick_feeds)
         self.reactor.scheduler.execute_after(0, self._tick_agent)
 
@@ -326,6 +356,8 @@ class MyBot(SingleServerIRCBot):
                 feed_msg = f"New item: {item['link']} | {item['title']}"
                 self._outbox.put(feed_msg)
                 self.agent.add_message(self.nickname, feed_msg)
+            if new_items:
+                self._seen_dirty = True
         except Exception:
             logger.exception("Exception while checking the feeds:")
             self._outbox.put("Checking the feeds failed.")
@@ -343,6 +375,16 @@ class MyBot(SingleServerIRCBot):
             interval = self.settings.get("check_interval", CHECK_INTERVAL)
             self.reactor.scheduler.execute_after(interval, self._tick_agent)
 
+    def _tick_save(self) -> None:
+        """Flush dirty state to disk — called by reactor every 30s on main thread."""
+        try:
+            self.agent.save_if_dirty()
+            if self._seen_dirty:
+                self._seen_dirty = False
+                self._save_seen()
+        except Exception:
+            logger.exception("Save tick failed")
+
     def send_message(self, msg: str) -> None:
         """Send a message directly — only call from the main (reactor) thread."""
         for chunk in split_message(msg):
@@ -357,10 +399,20 @@ def main_bot(
     sasl_password: Optional[str],
     settings_fname: Optional[str],
     memory_fname: Optional[str],
+    history_fname: Optional[str] = None,
+    seen_fname: Optional[str] = None,
 ) -> None:
     """Start the ircbot."""
     bot = MyBot(
-        channel, nickname, server, port, sasl_password, settings_fname, memory_fname
+        channel,
+        nickname,
+        server,
+        port,
+        sasl_password,
+        settings_fname,
+        memory_fname,
+        history_fname,
+        seen_fname,
     )
     bot.start()
 
@@ -372,7 +424,9 @@ def main():
     port = int(os.environ.get("BOT_PORT", "6667"))
     sasl_password = os.environ.get("BOT_SASL_PASSWORD", None)
     settings_fname = os.environ.get("SETTINGS_FNAME", None)
-    memory_fname = os.environ.get("AGENT_MEMORY_FILE", None)
+    memory_fname = os.environ.get("AGENT_MEMORY_FNAME", None)
+    history_fname = os.environ.get("AGENT_HISTORY_FNAME", None)
+    seen_fname = os.environ.get("PARSER_SEEN_FNAME", None)
     main_bot(
         channel,
         nickname,
@@ -381,6 +435,8 @@ def main():
         sasl_password=sasl_password,
         settings_fname=settings_fname,
         memory_fname=memory_fname,
+        history_fname=history_fname,
+        seen_fname=seen_fname,
     )
 
 

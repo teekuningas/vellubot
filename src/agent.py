@@ -47,19 +47,27 @@ def _make_client() -> Union[OpenAI, AzureOpenAI]:
 class AgentState:
     """Owns all agentic state: urge accumulator, chat history buffer, memory notepad, LLM calls."""
 
-    def __init__(self, bot_name: str, memory_file: Optional[str] = None) -> None:
+    def __init__(
+        self,
+        bot_name: str,
+        memory_fname: Optional[str] = None,
+        history_fname: Optional[str] = None,
+    ) -> None:
         self.bot_name = bot_name
-        self.memory_file = memory_file
+        self.memory_fname = memory_fname
+        self.history_fname = history_fname
         self.memories: list[Optional[str]] = (
             self._load_memories()
         )  # fixed MEMORY_SLOTS slots
         self.history: list[tuple[float, str, str]] = (
-            []
+            self._load_history()
         )  # (timestamp, username, message)
         self._urge: float = 0.0
         self._last_tick: float = time.time()
         self._urge_threshold: float = self._next_threshold()
         self._running = False  # guards against concurrent agent runs
+        self._memories_dirty: bool = False
+        self._history_dirty: bool = False
         self._lock = threading.Lock()
         self._client = _make_client()
         self._model = os.environ.get("OPENAI_MODEL") or "gpt-4o-mini"
@@ -71,6 +79,7 @@ class AgentState:
             self.history.append((ts, username, msg))
             if len(self.history) > HISTORY_CAP:
                 self.history.pop(0)
+            self._history_dirty = True
             # bot's own messages don't build urge — avoids self-hype loops
             if username == self.bot_name:
                 return False
@@ -151,7 +160,7 @@ class AgentState:
                             logger.info("Memory slot %d: %s", slot, self.memories[slot])
                     except (KeyError, ValueError, TypeError):
                         pass
-            self._save_memories()
+                self._memories_dirty = True
 
         msg_to_send = None
         if result.get("should_speak"):
@@ -170,6 +179,7 @@ class AgentState:
                         self.history.append((time.time(), self.bot_name, msg))
                         if len(self.history) > HISTORY_CAP:
                             self.history.pop(0)
+                        self._history_dirty = True
                     msg_to_send = msg
 
         if msg_to_send:
@@ -283,10 +293,10 @@ Palauta VAIN alla olevan rakenteen mukainen JSON:
     def _load_memories(self) -> list[Optional[str]]:
         """Load memory slots from file, always returning a list of exactly MEMORY_SLOTS entries."""
         slots: list[Optional[str]] = [None] * MEMORY_SLOTS
-        if not self.memory_file:
+        if not self.memory_fname:
             return slots
         try:
-            with open(self.memory_file, "r") as f:
+            with open(self.memory_fname, "r") as f:
                 data = json.load(f)
             if isinstance(data, list):
                 for i, val in enumerate(data[:MEMORY_SLOTS]):
@@ -297,16 +307,60 @@ Palauta VAIN alla olevan rakenteen mukainen JSON:
         except FileNotFoundError:
             pass
         except Exception:
-            logger.exception("Failed to load memories from %s", self.memory_file)
+            logger.exception("Failed to load memories from %s", self.memory_fname)
         return slots
 
     def _save_memories(self) -> None:
-        if not self.memory_file:
+        if not self.memory_fname:
             return
         with self._lock:
             data = list(self.memories)
+            self._memories_dirty = False
         try:
-            with open(self.memory_file, "w") as f:
+            with open(self.memory_fname, "w") as f:
                 json.dump(data, f, indent=2, ensure_ascii=False)
         except Exception:
-            logger.exception("Failed to save memories to %s", self.memory_file)
+            logger.exception("Failed to save memories to %s", self.memory_fname)
+
+    def _load_history(self) -> list[tuple[float, str, str]]:
+        if not self.history_fname:
+            return []
+        try:
+            with open(self.history_fname, "r") as f:
+                data = json.load(f)
+            if isinstance(data, list):
+                result = []
+                for item in data:
+                    if isinstance(item, list) and len(item) == 3:
+                        try:
+                            result.append((float(item[0]), str(item[1]), str(item[2])))
+                        except (ValueError, TypeError):
+                            pass
+                return result[-HISTORY_CAP:]
+        except FileNotFoundError:
+            pass
+        except Exception:
+            logger.exception("Failed to load history from %s", self.history_fname)
+        return []
+
+    def _save_history(self) -> None:
+        if not self.history_fname:
+            return
+        with self._lock:
+            data = list(self.history)
+            self._history_dirty = False
+        try:
+            with open(self.history_fname, "w") as f:
+                json.dump(data, f, ensure_ascii=False)
+        except Exception:
+            logger.exception("Failed to save history to %s", self.history_fname)
+
+    def save_if_dirty(self) -> None:
+        """Flush any dirty state to disk. Called periodically from the main thread."""
+        with self._lock:
+            save_memories = self._memories_dirty
+            save_history = self._history_dirty
+        if save_memories:
+            self._save_memories()
+        if save_history:
+            self._save_history()
